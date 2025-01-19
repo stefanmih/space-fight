@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Fight</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: black;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // pomocne funkcije
+        const loadImage = (src) => {
+            const img = new Image();
+            img.src = src;
+            return img;
+        };
+
+        // kreiranje entiteta
+        const createBullet = (x, y, direction, angle = 0) => ({
+            x, y, width: 5, height: 10, color: 'yellow', direction, speed: 10, angle,
+        });
+
+        const createEnemy = () => ({
+            x: Math.random() * canvas.width, y: -50, width: 100, height: 100, image: loadImage('ship.png'), speed: 3,
+        });
+
+        const createBonus = (x, y) => ({
+            x, y, width: 80, height: 80, image: loadImage('bonus.png'), color: 'blue', speed: 3,
+        });
+
+        // ECS komponente
+        const components = {
+            player: { x: canvas.width / 2, y: canvas.height - 50, width: 100, height: 100, image: loadImage('ship.png'), speed: 20, dx: 0, dy: 0 },
+            bullets: [],
+            enemies: [],
+            bonuses: [],
+            enemyBullets: [],
+            points: 0,
+            isBonusActive: false,
+            bulletType: 'single',
+            canShoot: true,
+            bonusStartTime: 0,
+        };
+
+        // ECS sistem
+
+        // sistem za pokrete
+        const movePlayer = () => {
+            components.player.x += components.player.dx;
+            components.player.y += components.player.dy;
+            if (components.player.x < 0) components.player.x = 0;
+            if (components.player.x + components.player.width > canvas.width) components.player.x = canvas.width - components.player.width;
+            if (components.player.y < 0) components.player.y = 0;
+            if (components.player.y + components.player.height > canvas.height) components.player.y = canvas.height - components.player.height;
+        };
+
+        const moveBullets = () => {
+            components.bullets.forEach((bullet, index) => {
+                if (bullet.angle === 0) {
+                    bullet.y -= bullet.speed;
+                } else {
+                    bullet.x += bullet.speed * Math.cos(bullet.angle);
+                    bullet.y -= bullet.speed * Math.sin(bullet.angle);
+                }
+                if (bullet.y < 0 || bullet.x < 0 || bullet.x > canvas.width) components.bullets.splice(index, 1);
+            });
+        };
+
+        const moveEnemies = () => {
+            components.enemies.forEach((enemy, index) => {
+                enemy.y += enemy.speed;
+                if (enemy.y > canvas.height) {
+                    // Ponovo spawnuje neprijatelja nakon sto odu sa ekrana
+                    components.enemies[index] = createEnemy();
+                }
+                if (Math.random() < 0.01) shootEnemyBullet(enemy);
+            });
+        };
+
+        const moveEnemyBullets = () => {
+            components.enemyBullets.forEach((bullet, index) => {
+                bullet.y += bullet.speed;
+                if (bullet.y > canvas.height) components.enemyBullets.splice(index, 1);
+            });
+        };
+
+        const moveBonuses = () => {
+            components.bonuses.forEach((bonus, index) => {
+                bonus.y += bonus.speed;
+                if (bonus.y > canvas.height) components.bonuses.splice(index, 1);
+            });
+        };
+
+        // sistem za pucanje
+        const shootBullet = () => {
+            if (!components.canShoot) return;
+            components.canShoot = false;
+
+            if (components.bulletType === 'single') {
+                components.bullets.push(createBullet(components.player.x + components.player.width / 2 - 2, components.player.y, 'up', 0));
+            } else if (components.bulletType === 'triple') {
+                components.bullets.push(createBullet(components.player.x, components.player.y, 'up', Math.PI - (Math.PI / 2.5)));
+                components.bullets.push(createBullet(components.player.x + components.player.width - 5, components.player.y, 'up', Math.PI / 2.5));
+                components.bullets.push(createBullet(components.player.x + components.player.width / 2 - 2, components.player.y, 'up', 0));
+            }
+
+            setTimeout(() => components.canShoot = true, 200);
+        };
+
+        const shootEnemyBullet = (enemy) => {
+            const enemyBullet = createBullet(enemy.x + enemy.width / 2, enemy.y + enemy.height, 'down');
+            components.enemyBullets.push(enemyBullet);
+        };
+
+        // detekcija kolizije sa brodovima ili mecima
+        const detectCollisions = () => {
+            components.bullets.forEach((bullet, bulletIndex) => {
+                components.enemies.forEach((enemy, enemyIndex) => {
+                    if (bullet.x < enemy.x + enemy.width && bullet.x + bullet.width > enemy.x &&
+                        bullet.y < enemy.y + enemy.height && bullet.y + bullet.height > enemy.y) {
+                        components.enemies.splice(enemyIndex, 1);
+                        components.bullets.splice(bulletIndex, 1);
+                        components.points += 1;
+                        if (Math.random() < 0.2) components.bonuses.push(createBonus(enemy.x + enemy.width / 2, enemy.y));
+                    }
+                });
+            });
+
+            components.enemies.forEach((enemy) => {
+                if (components.player.x < enemy.x + enemy.width && components.player.x + components.player.width > enemy.x &&
+                    components.player.y < enemy.y + enemy.height && components.player.y + components.player.height > enemy.y) {
+                    gameOver();
+                }
+            });
+
+            components.enemyBullets.forEach((bullet) => {
+                if (bullet.x < components.player.x + components.player.width && bullet.x + bullet.width > components.player.x &&
+                    bullet.y < components.player.y + components.player.height && bullet.y + bullet.height > components.player.y) {
+                    gameOver();
+                }
+            });
+
+            components.bonuses.forEach((bonus, bonusIndex) => {
+                if (bonus.x < components.player.x + components.player.width && bonus.x + bonus.width > components.player.x &&
+                    bonus.y < components.player.y + components.player.height && bonus.y + bonus.height > components.player.y) {
+                    components.bonuses.splice(bonusIndex, 1);
+                    activateBonus();
+                }
+            });
+        };
+
+        // sistem za bonuse
+        const activateBonus = () => {
+            components.isBonusActive = true;
+            components.bulletType = 'triple';
+            components.bonusStartTime = Date.now();
+        };
+
+        const handleBonus = () => {
+            if (components.isBonusActive && Date.now() - components.bonusStartTime > 5000) {
+                components.isBonusActive = false;
+                components.bulletType = 'single';
+            }
+        };
+
+        // iscrtavanje sistema
+        const drawBackground = () => {
+            const backgroundImg = loadImage('space.png');
+            if (backgroundImg.complete) {
+                ctx.drawImage(backgroundImg, 0, 0, canvas.width, canvas.height);
+            } else {
+                backgroundImg.onload = () => {
+                    ctx.drawImage(backgroundImg, 0, 0, canvas.width, canvas.height);
+                };
+            }
+        };
+
+        const drawPlayer = () => {
+            ctx.drawImage(components.player.image, components.player.x, components.player.y, components.player.width, components.player.height);
+        };
+
+        const drawBullets = () => {
+            components.bullets.forEach(bullet => {
+                ctx.fillStyle = bullet.color;
+                ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+            });
+        };
+
+        const drawEnemies = () => {
+            components.enemies.forEach(enemy => {
+                ctx.save();
+                ctx.translate(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2);
+                ctx.rotate(Math.PI);
+                ctx.drawImage(enemy.image, -enemy.width / 2, -enemy.height / 2, enemy.width, enemy.height);
+                ctx.restore();
+            });
+        };
+
+        const drawEnemyBullets = () => {
+            components.enemyBullets.forEach(bullet => {
+                ctx.fillStyle = 'red';
+                ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+            });
+        };
+
+        const drawBonuses = () => {
+            components.bonuses.forEach(bonus => {
+                ctx.fillStyle = bonus.color;
+                ctx.drawImage(bonus.image, bonus.x, bonus.y, bonus.width, bonus.height);
+            });
+        };
+
+        const drawUI = () => {
+            ctx.fillStyle = 'white';
+            ctx.font = '20px Arial';
+            ctx.fillText('Press Space to Shoot', 20, 30);
+            ctx.fillText('Bonus Active: ' + (components.isBonusActive ? 'Yes' : 'No'), 20, 60);
+            ctx.fillText('Points: ' + components.points, 20, 90);
+        };
+
+        // Reload stranice kada se desi kolizija
+        const gameOver = () => {
+            document.location.reload();
+        };
+
+        // Listeneri za tastaturu
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') components.player.dy = -components.player.speed;
+            if (e.key === 'ArrowDown') components.player.dy = components.player.speed;
+            if (e.key === 'ArrowLeft') components.player.dx = -components.player.speed;
+            if (e.key === 'ArrowRight') components.player.dx = components.player.speed;
+            if (e.key === ' ') shootBullet();
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') components.player.dy = 0;
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') components.player.dx = 0;
+        });
+
+        // Glavna petlja
+        const gameLoop = (timestamp) => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBackground();
+            movePlayer();
+            moveBullets();
+            moveEnemies();
+            moveEnemyBullets();
+            moveBonuses();
+            detectCollisions();
+            handleBonus();
+
+            drawPlayer();
+            drawBullets();
+            drawEnemies();
+            drawEnemyBullets();
+            drawBonuses();
+            drawUI();
+
+            if (components.enemies.length < 7) {
+                components.enemies.push(createEnemy());
+            }
+
+            requestAnimationFrame(gameLoop);
+        };
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+
+</html>
